@@ -1,0 +1,28 @@
+plugins {
+	id 'java-library'
+}
+
+apply plugin: 'io.spring.dependency-management'
+
+dependencyManagement {
+	imports {
+		mavenBom 'org.springframework.boot:spring-boot-dependencies:4.0.2'
+	}
+}
+
+description = 'Orch Framework Spring Boot Starter'
+
+dependencies {
+	api project(':orch-framework-core')
+
+	implementation 'org.springframework.boot:spring-boot-starter'
+	implementation 'org.springframework.boot:spring-boot-autoconfigure'
+	implementation 'org.springframework:spring-aop'
+	implementation 'org.aspectj:aspectjweaver'
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+	annotationProcessor 'org.springframework.boot:spring-boot-configuration-processor'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
