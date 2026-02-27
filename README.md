@@ -20,6 +20,7 @@
     * [3.1 BusinessContext - 上下文传递](#31-businesscontext---上下文传递)
     * [3.2 BusinessAssemblyUnit - 装配单元](#32-businessassemblyunit---装配单元)
     * [3.3 BusinessEmptyAssembly - 空装配线](#33-businessemptyassembly---空装配线)
+    * [3.4 DynamicAssembly - 动态装配线](#34-dynamicassembly---动态装配线)
   * [四、录制/回放系统 (record包) - 测试基础设施](#四录制回放系统-record包---测试基础设施)
     * [4.1 @RecordAndReplay 注解](#41-recordandreplay-注解)
     * [4.2 RecordAndReplayAspect - AOP切面](#42-recordandreplayaspect---aop切面)
@@ -47,11 +48,11 @@
     * [10.2 泛型编程](#102-泛型编程)
     * [10.3 依赖注入模式](#103-依赖注入模式)
   * [十一、代码示例](#十一代码示例)
-    * [11.1 定义业务类型](#111-定义业务类型)
+    * [11.1 注册业务类型](#111-注册业务类型)
     * [11.2 实现业务实体与门面](#112-实现业务实体与门面)
-    * [11.3 实现装配线](#113-实现装配线)
-    * [11.4 录制与回放测试用例](#114-录制与回放测试用例)
-    * [11.5 自定义SPI实现](#115-自定义spi实现)
+    * [11.3 录制与回放测试用例](#113-录制与回放测试用例)
+    * [11.4 自定义SPI实现](#114-自定义spi实现)
+    * [11.5 高级用法：自定义Helper与Assembly](#115-高级用法自定义helper与assembly)
   * [十二、最佳实践](#十二最佳实践)
     * [12.1 开发规范](#121-开发规范)
     * [12.2 测试最佳实践](#122-测试最佳实践)
@@ -90,20 +91,13 @@
 │                     Consumer Application (接入方)                    │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  MyService                                                    │  │
-│  │  - handle(MyVO, MyAssembly)                                   │  │
+│  │  - handle(MyVO) → myFacade.process(myVO)                      │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Custom Assembly (自定义装配线)                               │  │
-│  │  ┌────────┐  ┌────────┐  ┌────────┐                          │  │
-│  │  │ Unit-1 │→ │ Unit-2 │→ │ Unit-N │                          │  │
-│  │  │业务单元│  │业务单元│  │业务单元│                          │  │
-│  │  └────────┘  └────────┘  └────────┘                          │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-│                                                                      │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  Custom Domain (自定义领域模型)                               │  │
-│  │  MyEntity, MyFacade, MyHelper, MyEnv, MyVO, MyDealVO         │  │
+│  │  Custom Domain (消费方最小代码: 4~5个类)                      │  │
+│  │  MyVO, MyDealVO, MyEnv, MyEntity, MyFacade                    │  │
+│  │  (Helper可选 · Assembly自动推导 · 类型注册声明@Bean即可)      │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
@@ -111,13 +105,14 @@
 │                  Core Framework (核心框架层)                         │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Pipeline Engine (编排引擎)                                   │  │
-│  │  BusinessFacade, BusinessAssembly, BusinessAssemblyUnit       │  │
-│  │  BusinessContext                                               │  │
+│  │  BusinessFacade<V,T,R>, BusinessAssembly, DynamicAssembly     │  │
+│  │  BusinessAssemblyUnit<V,T,R>, BusinessContext<T>               │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Entity Model (实体模型)                                      │  │
-│  │  Business, UserBusiness, BusinessEntity, BusinessHelper       │  │
+│  │  Business, UserBusiness, BusinessEntity<O>, BusinessHelper<R> │  │
+│  │  @AfterProcess (注解驱动生命周期)                              │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐  │
@@ -135,7 +130,7 @@
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  SPI Extension Points (扩展点)                                │  │
 │  │  TypeRegistry, JsonSerializer, BeanProvider                    │  │
-│  │  TestCasePersistenceService                                    │  │
+│  │  SimpleBusinessType, TestCasePersistenceService                │  │
 │  │  BusinessTypeIdentifier, AssemblyTypeIdentifier                │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └────────────────────────────┬────────────────────────────────────────┘
@@ -147,6 +142,7 @@
 │  │  - JacksonJsonSerializer (默认JSON实现)                       │  │
 │  │  - SpringBeanProvider (默认Bean查找)                          │  │
 │  │  - DefaultTypeRegistry (默认类型注册)                         │  │
+│  │  - 自动收集 BusinessTypeIdentifier/AssemblyTypeIdentifier Bean│  │
 │  │  - RecordAndReplayAspect (条件启用)                           │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
@@ -169,6 +165,9 @@ Business (UUID标识: "business-" + UUID)
             │               └── [消费方自定义VO]
             │
             ├── BusinessEntity<O extends BusinessHelper> (业务实体)
+            │       │
+            │       ├── getEnv(Class) — Env快捷访问
+            │       ├── @AfterProcess — 注解驱动生命周期钩子
             │       └── [消费方自定义Entity]
             │
             └── BusinessDealVO<T extends BusinessEntity> (输出数据)
@@ -180,31 +179,41 @@ Business (UUID标识: "business-" + UUID)
 │                      Processing Pipeline                         │
 └─────────────────────────────────────────────────────────────────┘
 
-BusinessFacade<V, T, O, R, A>
+BusinessFacade<V, T, R>   (3个泛型: DealVO, Entity, InputVO)
     │
-    ├── process(O, R, A) : V
+    ├── process(R) : V
     │       │
-    │       ├── 1. assembly.build(tClazz, vClazz, r)
+    │       ├── 1. assembly = createForType(getAssemblyTypeCode())
+    │       │       └── 自动创建 DynamicAssembly 或已注册的Assembly
+    │       │
+    │       ├── 2. assembly.build(tClazz, vClazz, r)
     │       │       └── 注册装配单元
     │       │
-    │       ├── 2. buildForContext(context, helper, tClazz)
-    │       │       └── 构建BusinessEntity
+    │       ├── 3. helper = getBusinessHelper()
+    │       │       └── 默认返回 new BusinessHelper<>()，可覆写
     │       │
-    │       ├── 3. assembly.ready(entity, vo)
+    │       ├── 4. BusinessHelper.build(helper, tClazz)
+    │       │       └── 反射构建BusinessEntity
+    │       │
+    │       ├── 5. assembly.ready(entity, vo)
     │       │       └── 装配单元就绪
     │       │
-    │       ├── 4. doProcess(entity) [Abstract]
-    │       │       └── 子类实现业务逻辑
+    │       ├── 6. doProcess(entity, vo) [Abstract]
+    │       │       └── 子类实现业务逻辑（VO直接传入）
     │       │
-    │       ├── 5. entity.buildVO(vClazz)
+    │       ├── 7. entity.buildVO(vClazz)
     │       │       └── 构建输出VO
     │       │
-    │       ├── 6. entity.afterProcess()
-    │       │       ├── saveDB()
-    │       │       └── delRedis()
+    │       ├── 8. entity.afterProcess()
+    │       │       ├── 扫描 @AfterProcess(SAVE_DB) 注解方法
+    │       │       ├── 扫描 @AfterProcess(DEL_REDIS) 注解方法
+    │       │       └── 回退到 helper.saveDB() / helper.delRedis()
     │       │
-    │       └── 7. assembly.complete(vo, entity, businessVO)
+    │       └── 9. assembly.complete(vo, entity, businessVO)
     │               └── 装配单元完成 + 测试用例处理
+    │
+    ├── getAssemblyTypeCode() [Abstract] — 返回装配线类型编码
+    ├── getBusinessHelper() — 默认实现，消费方可覆写
     │
     └── Implementations:
             └── [消费方自定义Facade]
@@ -227,22 +236,31 @@ BusinessAssembly (装配线基类)
     │       ├── multiBusinessEnv: Map<markName, Map<key, List<InteractionRecord>>>
     │       └── multiBusinessDealVO: Map<markName, BusinessDealVO>
     │
+    ├── createForType(typeCode) — 工厂方法，自动推导Assembly类型
+    │
     └── Implementations:
             ├── BusinessEmptyAssembly (空装配线，兜底)
-            └── [消费方自定义Assembly]
+            ├── DynamicAssembly (动态装配线，自动推导)
+            └── [消费方自定义Assembly — 仅高级场景需要]
 ```
 
 ### 1.4 时序图 - 业务处理流程
 
 ```
-Client          Assembly        Facade          Entity          Helper          Env
+Client          Facade          Assembly        Entity          Helper          Env
   │               │               │               │               │               │
-  │──process()───>│               │               │               │               │
+  │──process(R)──>│               │               │               │               │
   │               │               │               │               │               │
-  │               │──build()─────>│               │               │               │
-  │               │  注册装配单元  │               │               │               │
+  │               │──createForType()──>           │               │               │
+  │               │  (DynamicAssembly)             │               │               │
   │               │               │               │               │               │
-  │               │               │──build()──────>│               │               │
+  │               │──assembly.build()─>│           │               │               │
+  │               │               │  注册装配单元  │               │               │
+  │               │               │               │               │               │
+  │               │──getBusinessHelper()           │               │               │
+  │               │  (默认 new BusinessHelper)     │               │               │
+  │               │               │               │               │               │
+  │               │──BusinessHelper.build()────────>│              │               │
   │               │               │  构建Entity    │               │               │
   │               │               │               │──setContext()─>│               │
   │               │               │               │               │──getEnv()────>│
@@ -250,33 +268,36 @@ Client          Assembly        Facade          Entity          Helper          
   │               │               │               │               │<──BusinessEnv─│
   │               │               │<──Entity───────│               │               │
   │               │               │               │               │               │
-  │               │──ready()─────>│               │               │               │
-  │               │  装配单元就绪  │               │               │               │
+  │               │──assembly.ready()>│            │               │               │
+  │               │               │  装配单元就绪  │               │               │
   │               │               │               │               │               │
-  │               │               │──doProcess()──>│               │               │
+  │               │──doProcess(entity, vo)────────>│               │               │
   │               │               │  [业务逻辑]    │               │               │
-  │               │               │               │──bizMethod()─>│               │
+  │               │               │               │──getEnv(Cls)─>│               │
+  │               │               │               │  (快捷方法)    │               │
   │               │               │               │               │──envMethod()─>│
   │               │               │               │               │  @RecordAndReplay
   │               │               │               │               │<──result──────│
   │               │               │               │<──result──────│               │
   │               │               │<──完成─────────│               │               │
   │               │               │               │               │               │
-  │               │               │──buildVO()────>│               │               │
-  │               │               │<──DealVO───────│               │               │
+  │               │──entity.buildVO()────────────>│               │               │
+  │               │<──DealVO──────│               │               │               │
   │               │               │               │               │               │
-  │               │               │──afterProcess()>│              │               │
-  │               │               │               │──saveDB()────>│               │
-  │               │               │               │──delRedis()──>│               │
-  │               │               │               │──finish()────>│               │
+  │               │──entity.afterProcess()────────>│              │               │
+  │               │               │               │──@AfterProcess(SAVE_DB)       │
+  │               │               │               │──@AfterProcess(DEL_REDIS)     │
+  │               │               │               │  (无注解时回退到Helper)        │
+  │               │               │               │──entity.finish()              │
+  │               │               │               │──@AfterProcess(FINISH)        │
   │               │               │               │               │               │
-  │               │──complete()──>│               │               │               │
-  │               │  装配单元完成  │               │               │               │
-  │               │  (填充测试数据)│               │               │               │
+  │               │──assembly.complete()>│         │               │               │
+  │               │               │  装配单元完成  │               │               │
+  │               │               │  (填充测试数据)│               │               │
   │               │               │               │               │               │
-  │               │  [RECORD模式] │               │               │               │
-  │               │──saveTestCase()               │               │               │
-  │               │  持久化测试用例│               │               │               │
+  │               │               │  [RECORD模式] │               │               │
+  │               │               │──saveTestCase()               │               │
+  │               │               │  持久化测试用例│               │               │
   │               │               │               │               │               │
   │<──result──────│               │               │               │               │
   │               │               │               │               │               │
@@ -291,20 +312,20 @@ Client          Assembly        Facade          Entity          Helper          
 
 消费方请求
     │
-    ├─ 业务输入数据 (UserBusinessVO子类)
-    ├─ 装配线实例 (BusinessAssembly子类)
-    └─ 业务模式 (BusinessMode)
+    └─ 业务输入数据 (UserBusinessVO子类)
     │
     ▼
 ┌─────────────────┐
 │  BusinessFacade  │ 门面入口
-│  process()       │
+│  process(R)      │
+│  ├─ createForType(getAssemblyTypeCode())  → Assembly自动推导
+│  └─ getBusinessHelper()                    → 默认实现或自定义
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐      ┌──────────────────┐
 │ BusinessAssembly│─────>│ AssemblyUnit     │ 装配单元
-│                 │      │                  │
+│ / DynamicAssembly      │                  │
 │ • build()       │      │ • context        │
 │ • ready()       │      │ • entity         │
 │ • complete()    │      │ • dealVO         │
@@ -312,12 +333,13 @@ Client          Assembly        Facade          Entity          Helper          
          │               └──────────────────┘
          ▼
 ┌─────────────────┐      ┌──────────────────┐
-│ BusinessEntity  │─────>│ BusinessHelper   │ 协作者
+│ BusinessEntity  │─────>│ BusinessHelper   │ 协作者(可选自定义)
 │                 │      │                  │
-│ • doProcess()   │      │ • context        │
-│ • buildVO()     │      │ • env            │
-│ • afterProcess()│      │ • saveDB()       │
-└─────────────────┘      │ • delRedis()     │
+│ • doProcess(R)  │      │ • context        │
+│ • getEnv(Class) │      │ • env            │
+│ • buildVO()     │      │ • saveDB()       │
+│ • @AfterProcess │      │ • delRedis()     │
+└─────────────────┘      │ • finish()       │
          │               └──────────────────┘
          │                        │
          │                        ▼
@@ -376,8 +398,8 @@ core.exception (异常体系)
 core.entity (实体模型)
     ├── Business
     ├── UserBusiness
-    ├── BusinessEntity<O>
-    └── BusinessHelper<R, A>
+    ├── BusinessEntity<O>    ← 支持 @AfterProcess + getEnv()
+    └── BusinessHelper<R>
 
     ↑ (依赖)
 
@@ -386,6 +408,11 @@ core.vo (值对象)
     ├── UserBusinessVO
     ├── BusinessDealVO<T>
     └── UserBusinessDealVO<T>
+
+    ↑ (依赖)
+
+core.annotation (注解)
+    └── @AfterProcess(Phase)  ← SAVE_DB, DEL_REDIS, FINISH
 
     ↑ (依赖)
 
@@ -398,10 +425,11 @@ core.record (录制/回放)
     ↑ (依赖)
 
 core.pipeline (编排引擎)
-    ├── BusinessFacade<V, T, O, R, A>
+    ├── BusinessFacade<V, T, R>
     ├── BusinessAssembly
-    ├── BusinessAssemblyUnit<V, T, R, A>
-    ├── BusinessContext<T, A>
+    ├── DynamicAssembly
+    ├── BusinessAssemblyUnit<V, T, R>
+    ├── BusinessContext<T>
     └── BusinessEmptyAssembly
 
     ↑ (依赖)
@@ -487,27 +515,43 @@ public abstract class UserBusinessDealVO<T extends BusinessEntity<?>> extends Bu
 public abstract class BusinessFacade<
     V extends UserBusinessDealVO<T>,    // 输出VO
     T extends BusinessEntity<?>,         // 实体
-    O extends BusinessHelper<R, A>,      // 助手
-    R extends UserBusinessVO,            // 输入VO
-    A extends BusinessAssembly>          // 装配线
+    R extends UserBusinessVO>            // 输入VO
 ```
 
 **核心流程：**
 
 ```
-process() → assembly.build() → buildForContext() → assembly.ready()
-         → doProcess() → buildVO() → afterProcess() → assembly.complete()
+process(R) → createForType() → assembly.build() → getBusinessHelper()
+           → BusinessHelper.build() → assembly.ready()
+           → doProcess(T, R) → buildVO() → afterProcess() → assembly.complete()
 ```
 
 **职责分离：**
 
-1. **assembly.build()**: 注册装配单元到装配线
-2. **buildForContext()**: 构建领域实体，设置上下文和Helper
-3. **assembly.ready()**: 装配单元就绪
-4. **doProcess()**: 执行业务逻辑（子类实现）
-5. **buildVO()**: 构建输出视图
-6. **afterProcess()**: 后处理（saveDB、delRedis）
-7. **assembly.complete()**: 装配单元完成，填充测试数据
+1. **createForType()**: 根据`getAssemblyTypeCode()`自动创建Assembly（DynamicAssembly或已注册类型）
+2. **assembly.build()**: 注册装配单元到装配线
+3. **getBusinessHelper()**: 获取Helper实例（默认`new BusinessHelper<>()`，消费方可覆写返回自定义Helper）
+4. **BusinessHelper.build()**: 反射构建领域实体，设置上下文
+5. **assembly.ready()**: 装配单元就绪
+6. **doProcess(T, R)**: 执行业务逻辑（子类实现，VO直接传入）
+7. **buildVO()**: 构建输出视图
+8. **afterProcess()**: 后处理（扫描`@AfterProcess`注解，回退到Helper的saveDB/delRedis）
+9. **assembly.complete()**: 装配单元完成，填充测试数据
+
+**关键抽象方法：**
+
+```java
+/** 返回装配线类型编码，框架据此创建 Assembly 实例 */
+public abstract String getAssemblyTypeCode();
+
+/** 业务逻辑入口，VO直接传入 */
+public abstract void doProcess(T t, R r);
+
+/** 返回Helper实例，默认new BusinessHelper<>()，消费方可覆写 */
+public BusinessHelper<R> getBusinessHelper() {
+    return new BusinessHelper<>();
+}
+```
 
 **异常处理策略：**
 
@@ -529,17 +573,17 @@ try {
 **核心职责：**
 
 ```java
-BusinessHelper<R extends UserBusinessVO, A extends BusinessAssembly>
-    ├── businessContext: BusinessContext<R, A>  // 上下文引用
-    ├── businessEnv: BusinessEnv               // 环境（延迟加载）
-    ├── beanProvider: static BeanProvider      // Bean查找SPI
+BusinessHelper<R extends UserBusinessVO>
+    ├── businessContext: BusinessContext<R>   // 上下文引用
+    ├── businessEnv: BusinessEnv              // 环境（延迟加载）
+    ├── beanProvider: static BeanProvider     // Bean查找SPI
     │
-    ├── build(O, Class<T>)                     // 反射构建Entity
-    ├── getBusinessEnv(Class<E>)               // 延迟加载Env
-    ├── getNowTime()                           // 从Env获取时间
-    ├── saveDB()                               // 生命周期钩子（空实现）
-    ├── delRedis()                             // 生命周期钩子（空实现）
-    └── finish()                               // 生命周期钩子（空实现）
+    ├── build(O, Class<T>)                   // 反射构建Entity
+    ├── getBusinessEnv(Class<E>)             // 延迟加载Env
+    ├── getNowTime()                         // 从Env获取时间
+    ├── saveDB()                             // 生命周期钩子（空实现）
+    ├── delRedis()                           // 生命周期钩子（空实现）
+    └── finish()                             // 生命周期钩子（空实现）
 ```
 
 **设计原则：**
@@ -547,7 +591,8 @@ BusinessHelper<R extends UserBusinessVO, A extends BusinessAssembly>
 1. **职责单一**: Helper只关注上下文管理和生命周期钩子
 2. **延迟初始化**: `BusinessEnv`按需加载并缓存
 3. **SPI依赖**: 通过静态`BeanProvider`查找Spring Bean，解耦框架与Spring
-4. **可扩展**: 消费方继承Helper添加自定义能力
+4. **可选自定义**: 简单场景下使用框架默认`BusinessHelper<R>`即可，复杂场景才需要自定义子类
+5. **注解替代**: `@AfterProcess`注解可直接在Entity上定义生命周期钩子，无需覆写Helper方法
 
 ### 2.5 BusinessEnv - 环境抽象与回放机制
 
@@ -600,10 +645,11 @@ BusinessAssembly (装配线)
 **核心能力：**
 
 1. **多阶段编排**: 支持按序执行多个业务单元，每个单元经历 build → ready → complete 生命周期
-2. **测试用例管理**: 内置测试用例的录制、回放、检查、复盘、重生成
-3. **上下文共享**: 装配线内所有单元共享同一Assembly实例
-4. **模式切换**: 通过`setRecordMode()`/`setCheckMode()`等方法切换运行模式
-5. **SPI驱动**: 通过`TypeRegistry`动态解析业务类型和装配线类型
+2. **自动推导**: `createForType(typeCode)`工厂方法，优先查找已注册Assembly，未找到则自动创建`DynamicAssembly`
+3. **测试用例管理**: 内置测试用例的录制、回放、检查、复盘、重生成
+4. **上下文共享**: 装配线内所有单元共享同一Assembly实例
+5. **模式切换**: 通过`setRecordMode()`/`setCheckMode()`等方法切换运行模式
+6. **SPI驱动**: 通过`TypeRegistry`动态解析业务类型和装配线类型
 
 ------
 
@@ -614,19 +660,17 @@ BusinessAssembly (装配线)
 ```java
 @Getter
 @Builder
-public class BusinessContext<T extends UserBusinessVO, A extends BusinessAssembly> {
-    private T businessVo;    // 输入VO
-    private A assembly;      // 装配线引用
+public class BusinessContext<T extends UserBusinessVO> {
+    private T businessVo;              // 输入VO
+    private BusinessAssembly assembly; // 装配线引用（非泛型）
 
-    public static <T extends UserBusinessVO, A extends BusinessAssembly>
-    BusinessContext<T, A> build(T businessVo, A assembly) {
+    public static <T extends UserBusinessVO>
+    BusinessContext<T> build(T businessVo, BusinessAssembly assembly) {
         // 如果assembly为null，使用BusinessEmptyAssembly兜底
-        if (assembly == null) {
-            assembly = (A) new BusinessEmptyAssembly();
-        }
-        return BusinessContext.<T, A>builder()
+        return BusinessContext.<T>builder()
                 .businessVo(businessVo)
-                .assembly(assembly)
+                .assembly(Objects.nonNull(assembly) ? assembly
+                    : BusinessAssembly.createAssembly(BusinessEmptyAssembly.class))
                 .build();
     }
 }
@@ -635,16 +679,16 @@ public class BusinessContext<T extends UserBusinessVO, A extends BusinessAssembl
 **设计要点：**
 - 携带输入VO和装配线引用贯穿整个Pipeline
 - 空装配线兜底，避免NullPointerException
-- 通过泛型约束确保类型安全
+- Assembly使用基类类型（不再是泛型参数），简化消费方代码
 
 ### 3.2 BusinessAssemblyUnit - 装配单元
 
 ```java
-public class BusinessAssemblyUnit<V, T, R, A> {
-    private BusinessContext<R, A> businessContext;  // 上下文
-    private T businessEntity;                       // 实体（ready后设置）
-    private V businessDealVO;                       // 输出（complete后设置）
-    private int order;                              // 执行顺序
+public class BusinessAssemblyUnit<V, T, R> {
+    private BusinessContext<R> businessContext;   // 上下文
+    private T businessEntity;                     // 实体（ready后设置）
+    private V businessDealVO;                     // 输出（complete后设置）
+    private int order;                            // 执行顺序
 }
 ```
 
@@ -671,6 +715,29 @@ public class BusinessEmptyAssembly extends BusinessAssembly {
 ```
 
 当不需要装配线编排时（如单一业务处理），使用空装配线作为兜底。
+
+### 3.4 DynamicAssembly - 动态装配线
+
+```java
+public class DynamicAssembly extends BusinessAssembly {
+    private final String typeCode;
+
+    public DynamicAssembly(String typeCode) {
+        this.typeCode = typeCode;
+    }
+
+    @Override
+    public String getAssemblyTypeCode() {
+        return typeCode;
+    }
+}
+```
+
+**设计要点：**
+- 由`BusinessAssembly.createForType(typeCode)`自动创建，当TypeRegistry中未注册对应Assembly类型时使用
+- 替代消费方编写空壳Assembly子类，消费方无需创建Assembly类
+- 支持完整的build → ready → complete生命周期
+- Facade只需通过`getAssemblyTypeCode()`声明类型编码即可
 
 ------
 
@@ -799,14 +866,18 @@ public class TestCaseVO implements Serializable {
 
 ```java
 public class TestCaseRunner {
-    private Object service;                          // 业务服务实例
-    private String methodName;                       // 服务方法名
-    private TestCasePersistenceService persistenceService;  // 持久化SPI
+    private BusinessFacade<?, ?, ?> facade;              // 业务Facade实例
+    private TestCasePersistenceService persistenceService; // 持久化SPI
+
+    public TestCaseRunner(BusinessFacade<?, ?, ?> facade,
+                          TestCasePersistenceService persistenceService) { ... }
 
     // 执行测试用例
     public BusinessAssembly run(BusinessMode mode, TestCaseVO testCaseVO) {
-        return BusinessAssembly.runTestCase(mode, service, methodName,
-                testCaseVO, persistenceService);
+        BusinessAssembly assembly = BusinessAssembly.createForType(
+            facade.getAssemblyTypeCode());
+        assembly.doRunTestCaseViaFacade(mode, facade, testCaseVO, persistenceService);
+        return assembly;
     }
 
     // 从执行结果中提取第一个BusinessVO
@@ -827,6 +898,10 @@ public class TestCaseEngine {
     private TestCaseComparator comparator;
     private TestCasePersistenceService persistenceService;
     private JsonSerializer jsonSerializer;
+
+    public TestCaseEngine(BusinessFacade<?, ?, ?> facade,
+                          TestCasePersistenceService persistenceService,
+                          JsonSerializer jsonSerializer) { ... }
 }
 ```
 
@@ -938,7 +1013,18 @@ public interface BusinessTypeIdentifier {
     Class<? extends UserBusinessVO> getVoClass();  // 关联的VO类
 }
 
-// 装配线类型标识
+// 便捷实现 — Java record，替代消费方编写枚举
+public record SimpleBusinessType(
+    String code,
+    String description,
+    Class<? extends UserBusinessVO> voClass
+) implements BusinessTypeIdentifier {
+    @Override public String getCode() { return code; }
+    @Override public String getDescription() { return description; }
+    @Override public Class<? extends UserBusinessVO> getVoClass() { return voClass; }
+}
+
+// 装配线类型标识（仅高级场景需要，DynamicAssembly已覆盖大多数场景）
 public interface AssemblyTypeIdentifier {
     String getCode();                                    // 唯一编码
     String getDescription();                             // 描述
@@ -979,9 +1065,18 @@ public class AiFrameworkAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public TypeRegistry typeRegistry(JsonSerializer jsonSerializer) {
+    public TypeRegistry typeRegistry(
+            JsonSerializer jsonSerializer,
+            ObjectProvider<List<BusinessTypeIdentifier>> businessTypes,
+            ObjectProvider<List<AssemblyTypeIdentifier>> assemblyTypes) {
         DefaultTypeRegistry registry = new DefaultTypeRegistry();
-        BusinessAssembly.configure(registry, jsonSerializer);  // 初始化框架
+        // 自动收集所有 BusinessTypeIdentifier Bean 并注册
+        businessTypes.ifAvailable(types ->
+            types.forEach(registry::registerBusinessType));
+        // 自动收集所有 AssemblyTypeIdentifier Bean 并注册
+        assemblyTypes.ifAvailable(types ->
+            types.forEach(registry::registerAssemblyType));
+        BusinessAssembly.configure(registry, jsonSerializer);
         return registry;
     }
 
@@ -998,6 +1093,7 @@ public class AiFrameworkAutoConfiguration {
 **关键设计：**
 - 所有Bean都标注`@ConditionalOnMissingBean`，消费方可完全覆盖
 - 初始化时自动配置框架的静态依赖（`BusinessHelper.configureBeanProvider()`、`BusinessAssembly.configure()`）
+- **自动类型收集**：通过`ObjectProvider<List<BusinessTypeIdentifier>>`自动发现并注册所有业务类型Bean，消费方无需手动创建TypeConfig配置类
 - AOP切面可通过配置开关控制
 
 ### 7.2 默认实现
@@ -1154,24 +1250,24 @@ public class BeanUtil {
 
 ### 10.2 泛型编程
 
-**五层泛型约束：**
+**三层泛型约束：**
 
 ```java
 BusinessFacade<
     V extends UserBusinessDealVO<T>,    // 输出VO，绑定到实体
     T extends BusinessEntity<?>,         // 实体
-    O extends BusinessHelper<R, A>,      // 助手，绑定到输入VO和装配线
-    R extends UserBusinessVO,            // 输入VO
-    A extends BusinessAssembly           // 装配线
+    R extends UserBusinessVO             // 输入VO
 >
 ```
 
 **泛型带来的好处：**
 
-1. **编译期类型检查**: 提前发现类型不匹配错误
-2. **IDE代码提示**: 完整的自动补全支持
+1. **编译期类型检查**: `doProcess(T, R)`的参数类型由编译器保证正确
+2. **IDE代码提示**: Entity和VO类的方法完整自动补全
 3. **重构安全**: 编译器保护，重命名不会遗漏
-4. **消除强转**: 避免运行时ClassCastException
+4. **消除强转**: `process(R)`返回精确的V类型
+
+**简化思路：** 原先5个泛型参数（V, T, O, R, A），现精简为3个。Assembly和Helper通过`getAssemblyTypeCode()`和`getBusinessHelper()`方法替代泛型约束，在保留核心类型安全的同时大幅降低消费方代码量。
 
 ### 10.3 依赖注入模式
 
@@ -1196,9 +1292,28 @@ public BeanProvider beanProvider(ApplicationContext context) {
 
 ## 十一、代码示例
 
-### 11.1 定义业务类型
+### 11.1 注册业务类型
 
-**Step 1: 实现BusinessTypeIdentifier**
+**方式一：使用 SimpleBusinessType（推荐）**
+
+```java
+@Configuration
+public class MyConfig {
+    @Bean
+    public BusinessTypeIdentifier orderType() {
+        return new SimpleBusinessType("order", "订单处理", OrderVO.class);
+    }
+
+    @Bean
+    public BusinessTypeIdentifier paymentType() {
+        return new SimpleBusinessType("payment", "支付处理", PaymentVO.class);
+    }
+}
+```
+
+框架的`AiFrameworkAutoConfiguration`会通过`ObjectProvider`自动收集所有`BusinessTypeIdentifier` Bean并注册到`TypeRegistry`。无需手动调用`registry.register()`。
+
+**方式二：使用枚举（复杂场景）**
 
 ```java
 public enum MyBusinessType implements BusinessTypeIdentifier {
@@ -1209,54 +1324,12 @@ public enum MyBusinessType implements BusinessTypeIdentifier {
     private final String description;
     private final Class<? extends UserBusinessVO> voClass;
 
-    @Override
-    public String getCode() { return code; }
-    @Override
-    public String getDescription() { return description; }
-    @Override
-    public Class<? extends UserBusinessVO> getVoClass() { return voClass; }
+    // getter methods...
 }
-```
 
-**Step 2: 实现AssemblyTypeIdentifier**
-
-```java
-public enum MyAssemblyType implements AssemblyTypeIdentifier {
-    ORDER_FLOW("order-flow", "订单流程装配线", OrderFlowAssembly.class);
-
-    private final String code;
-    private final String description;
-    private final Class<? extends BusinessAssembly> assemblyClass;
-
-    @Override
-    public String getCode() { return code; }
-    @Override
-    public String getDescription() { return description; }
-    @Override
-    public Class<? extends BusinessAssembly> getAssemblyClass() { return assemblyClass; }
-}
-```
-
-**Step 3: 注册类型**
-
-```java
-@Configuration
-public class MyTypeConfig {
-    @Bean
-    public TypeRegistry typeRegistry(JsonSerializer jsonSerializer) {
-        DefaultTypeRegistry registry = new DefaultTypeRegistry();
-        // 注册业务类型
-        for (MyBusinessType type : MyBusinessType.values()) {
-            registry.registerBusinessType(type);
-        }
-        // 注册装配线类型
-        for (MyAssemblyType type : MyAssemblyType.values()) {
-            registry.registerAssemblyType(type);
-        }
-        BusinessAssembly.configure(registry, jsonSerializer);
-        return registry;
-    }
-}
+// 枚举需要逐个注册为Bean
+@Bean public BusinessTypeIdentifier orderType() { return MyBusinessType.ORDER; }
+@Bean public BusinessTypeIdentifier paymentType() { return MyBusinessType.PAYMENT; }
 ```
 
 ### 11.2 实现业务实体与门面
@@ -1273,7 +1346,7 @@ public class OrderVO extends UserBusinessVO {
 
     @Override
     public BusinessTypeIdentifier getBusinessType() {
-        return MyBusinessType.ORDER;
+        return new SimpleBusinessType("order", "订单处理", OrderVO.class);
     }
 }
 ```
@@ -1321,101 +1394,71 @@ public class OrderEnv extends BusinessEnv {
 }
 ```
 
-**Step 4: 实现Helper**
+**Step 4: 实现Entity — 使用 getEnv() 快捷方法 + @AfterProcess 注解**
 
 ```java
-public class OrderHelper extends BusinessHelper<OrderVO, OrderFlowAssembly> {
-    private OrderEnv orderEnv;
+@Getter
+public class OrderEntity extends BusinessEntity<BusinessHelper<OrderVO>> {
+    private String orderStatus;
+    private BigDecimal finalAmount;
 
-    public OrderEnv getOrderEnv() {
-        if (orderEnv == null) {
-            orderEnv = getBusinessEnv(OrderEnv.class);
-        }
-        return orderEnv;
+    public OrderEntity(BusinessHelper<OrderVO> helper) {
+        super(helper);
     }
 
-    @Override
-    public void saveDB() {
+    // doProcess(T, R) 中 VO 直接传入，无需从 Helper 长链路获取
+    public void processOrder(OrderVO vo) {
+        // getEnv() 快捷方法，无需 getBusinessHelper().getBusinessEnv(...)
+        int stock = getEnv(OrderEnv.class).queryInventory(vo.getProductName());
+        if (stock <= 0) {
+            throw new SkipException("库存不足");
+        }
+        BigDecimal discount = getEnv(OrderEnv.class).queryDiscount(vo.getUserId());
+        this.finalAmount = vo.getAmount().multiply(discount);
+        this.orderStatus = "CONFIRMED";
+    }
+
+    // @AfterProcess 注解替代 Helper.saveDB()，无需自定义Helper
+    @AfterProcess(AfterProcess.Phase.SAVE_DB)
+    public void save() {
         // 持久化订单数据
         orderRepository.save(buildOrderEntity());
     }
 
-    @Override
-    public void delRedis() {
+    @AfterProcess(AfterProcess.Phase.DEL_REDIS)
+    public void clearCache() {
         // 清除相关缓存
         redisTemplate.delete("order:" + getUserId());
     }
-}
-```
 
-**Step 5: 实现Entity**
-
-```java
-@Getter
-public class OrderEntity extends BusinessEntity<OrderHelper> {
-    private String orderStatus;
-    private BigDecimal finalAmount;
-
-    public OrderEntity(OrderHelper helper) {
-        super(helper);
-    }
-
-    public void processOrder() {
-        OrderVO vo = getBusinessHelper().getBusinessContext().getBusinessVo();
-        // 查询库存（会被录制/回放）
-        int stock = getBusinessHelper().getOrderEnv().queryInventory(vo.getProductName());
-        if (stock <= 0) {
-            throw new SkipException("库存不足");
-        }
-        // 查询折扣（会被录制/回放）
-        BigDecimal discount = getBusinessHelper().getOrderEnv().queryDiscount(vo.getUserId());
-        this.finalAmount = vo.getAmount().multiply(discount);
-        this.orderStatus = "CONFIRMED";
+    @AfterProcess(AfterProcess.Phase.FINISH)
+    public void onFinish() {
+        // 发送通知
+        eventPublisher.publishEvent(new OrderCompleteEvent(getUserId()));
     }
 }
 ```
 
-**Step 6: 实现Facade**
+**Step 5: 实现Facade — 3个泛型，无需Assembly参数**
 
 ```java
 @Component
-public class OrderFacade extends BusinessFacade<OrderDealVO, OrderEntity,
-        OrderHelper, OrderVO, OrderFlowAssembly> {
-
-    @Autowired
-    private OrderHelper orderHelper;
-
-    @Override
-    public OrderHelper getBusinessHelper() {
-        return orderHelper;
-    }
-
-    @Override
-    public void doProcess(OrderEntity entity) {
-        entity.processOrder();
-    }
-}
-```
-
-### 11.3 实现装配线
-
-```java
-public class OrderFlowAssembly extends BusinessAssembly {
+public class OrderFacade extends BusinessFacade<OrderDealVO, OrderEntity, OrderVO> {
 
     @Override
     public String getAssemblyTypeCode() {
-        return "order-flow";
+        return "order";
     }
 
-    // 自定义装配单元构建方法（通过CacheInvoke反射调用）
-    public BusinessAssemblyUnit<OrderDealVO, OrderEntity, OrderVO, OrderFlowAssembly>
-    doBuild(OrderDealVO v, OrderEntity t, OrderVO r) {
-        return BusinessAssemblyUnit.doBuild(v, t, r, this);
+    // VO直接传入doProcess，使用方便
+    @Override
+    public void doProcess(OrderEntity entity, OrderVO vo) {
+        entity.processOrder(vo);
     }
 }
 ```
 
-**使用装配线：**
+**使用：**
 
 ```java
 @Service
@@ -1423,13 +1466,24 @@ public class OrderService {
     @Autowired
     private OrderFacade orderFacade;
 
-    public OrderDealVO handle(OrderVO orderVO, OrderFlowAssembly assembly) {
-        return orderFacade.process(orderFacade.getBusinessHelper(), orderVO, assembly);
+    public OrderDealVO handle(OrderVO orderVO) {
+        return orderFacade.process(orderVO);  // 一行调用
     }
 }
 ```
 
-### 11.4 录制与回放测试用例
+### 11.3 录制与回放测试用例
+
+**创建TestCaseEngine：**
+
+```java
+// 直接传入Facade，无需反射的 (service, methodName) 模式
+TestCaseEngine engine = new TestCaseEngine(
+    orderFacade,           // BusinessFacade实例
+    persistenceService,    // 持久化SPI
+    jsonSerializer         // JSON序列化
+);
+```
 
 **录制测试用例：**
 
@@ -1438,59 +1492,52 @@ public class OrderService {
 public class OrderIntegrationTest {
 
     @Autowired
-    private OrderService orderService;
+    private OrderFacade orderFacade;
 
     @Autowired
     private TestCasePersistenceService persistenceService;
 
+    @Autowired
+    private JsonSerializer jsonSerializer;
+
     @Test
     public void testRecordOrderFlow() {
-        // 1. 创建装配线并开启录制模式
-        OrderFlowAssembly assembly = BusinessAssembly.createAssembly(OrderFlowAssembly.class);
-        assembly.setRecordMode("order_test_001", persistenceService);
+        TestCaseEngine engine = new TestCaseEngine(
+            orderFacade, persistenceService, jsonSerializer);
 
-        // 2. 构造输入数据
-        OrderVO orderVO = new OrderVO();
-        orderVO.setUserId("user_123");
-        orderVO.setOrderId("order_456");
-        orderVO.setAmount(new BigDecimal("99.99"));
-        orderVO.setProductName("product_A");
+        // 构造测试用例输入
+        TestCaseVO testCase = new TestCaseVO();
+        testCase.setName("order_test_001");
 
-        // 3. 执行业务流程（自动录制所有@RecordAndReplay方法）
-        OrderDealVO result = orderService.handle(orderVO, assembly);
+        // 录制（自动执行并记录所有@RecordAndReplay方法）
+        TestCaseVO recorded = engine.record(testCase);
 
-        // 4. 验证结果
-        assertNotNull(result);
-        assertEquals("CONFIRMED", result.getOrderStatus());
+        assertNotNull(recorded);
+        assertNotNull(recorded.getMultiBusinessVO());
     }
 }
 ```
 
-**回放测试用例：**
+**回放验证：**
 
 ```java
 @Test
 public void testReplayOrderFlow() {
-    // 1. 加载已录制的测试用例
+    TestCaseEngine engine = new TestCaseEngine(
+        orderFacade, persistenceService, jsonSerializer);
+
+    // CHECK模式 - 严格验证
+    boolean checkResult = engine.check(1);  // 按ID加载并验证
+    assertTrue(checkResult);
+
+    // REPLAY模式 - 回放（无需外部依赖）
     TestCaseVO testCase = persistenceService.load(1);
-
-    // 2. 使用TestCaseEngine回放
-    TestCaseRunner runner = new TestCaseRunner(orderService, "handle", persistenceService);
-    TestCaseEngine engine = new TestCaseEngine(runner,
-            new TestCaseComparator(jsonSerializer, new ObjectCompareUtil(jsonSerializer)),
-            persistenceService, jsonSerializer);
-
-    // 3. CHECK模式 - 严格验证
-    BusinessAssembly result = engine.check(1);
-    assertNotNull(result);
-
-    // 4. REPLAY模式 - 回放（无需外部依赖）
-    BusinessAssembly replayResult = engine.replay(testCase);
+    TestCaseVO replayResult = engine.replay(testCase);
     assertNotNull(replayResult);
 }
 ```
 
-### 11.5 自定义SPI实现
+### 11.4 自定义SPI实现
 
 **自定义JsonSerializer（如使用Gson）：**
 
@@ -1542,6 +1589,85 @@ public class DbTestCasePersistenceService implements TestCasePersistenceService 
 }
 ```
 
+### 11.5 高级用法：自定义Helper与Assembly
+
+大多数场景下，使用框架默认的`BusinessHelper<R>`和`DynamicAssembly`即可。当需要在Helper中封装复杂的共享逻辑时，可以自定义：
+
+**自定义Helper（复杂场景）：**
+
+```java
+public class OrderHelper extends BusinessHelper<OrderVO> {
+    private OrderEnv orderEnv;
+
+    public OrderEnv getOrderEnv() {
+        if (orderEnv == null) {
+            orderEnv = getBusinessEnv(OrderEnv.class);
+        }
+        return orderEnv;
+    }
+
+    // 也可以在Helper中定义生命周期钩子（与Entity上的@AfterProcess二选一）
+    @Override
+    public void saveDB() {
+        orderRepository.save(buildOrderEntity());
+    }
+}
+```
+
+**Facade覆写getBusinessHelper（协变返回类型）：**
+
+```java
+@Component
+public class OrderFacade extends BusinessFacade<OrderDealVO, OrderEntity, OrderVO> {
+
+    @Autowired
+    private OrderHelper orderHelper;
+
+    @Override
+    public String getAssemblyTypeCode() { return "order"; }
+
+    // Java支持协变返回类型，可返回具体子类
+    @Override
+    public OrderHelper getBusinessHelper() {
+        return orderHelper;
+    }
+
+    @Override
+    public void doProcess(OrderEntity entity, OrderVO vo) {
+        entity.processOrder(vo);
+    }
+}
+```
+
+**自定义Assembly（多单元编排场景）：**
+
+仅当需要多个业务单元的复杂编排时才需要自定义Assembly。需同时注册`AssemblyTypeIdentifier`：
+
+```java
+public class OrderFlowAssembly extends BusinessAssembly {
+    @Override
+    public String getAssemblyTypeCode() { return "order-flow"; }
+
+    // 自定义装配单元构建（CacheInvoke反射调用）
+    public BusinessAssemblyUnit<OrderDealVO, OrderEntity, OrderVO>
+    doBuild(OrderDealVO v, OrderEntity t, OrderVO r) {
+        return BusinessAssemblyUnit.doBuild(v, t, r, this);
+    }
+}
+
+// 注册Assembly类型
+@Bean
+public AssemblyTypeIdentifier orderFlowAssembly() {
+    return new AssemblyTypeIdentifier() {
+        public String getCode() { return "order-flow"; }
+        public String getDescription() { return "订单流程装配线"; }
+        public Class<? extends BusinessAssembly> getAssemblyClass() {
+            return OrderFlowAssembly.class;
+        }
+    };
+}
+```
+
 ------
 
 ## 十二、最佳实践
@@ -1554,9 +1680,9 @@ public class DbTestCasePersistenceService implements TestCasePersistenceService 
 VO命名:     XxxVO (输入)、XxxDealVO (输出)
 Entity命名: XxxEntity
 Facade命名: XxxFacade
-Helper命名: XxxHelper
+Helper命名: XxxHelper（可选，简单场景无需自定义）
 Env命名:    XxxEnv
-Assembly命名: XxxAssembly
+Assembly命名: XxxAssembly（可选，DynamicAssembly自动推导）
 ```
 
 #### 12.1.2 Env方法规范
@@ -1594,45 +1720,67 @@ if (externalServiceDown) {
 throw new RuntimeException("处理失败");
 ```
 
-#### 12.1.4 Helper生命周期钩子
+#### 12.1.4 生命周期钩子
+
+**方式一：在Entity上使用@AfterProcess注解（推荐）**
 
 ```java
-// ✅ 正确：在saveDB中批量持久化
-@Override
-public void saveDB() {
+// ✅ 推荐：注解驱动，无需自定义Helper
+@AfterProcess(AfterProcess.Phase.SAVE_DB)
+public void save() {
     if (needUpdate) {
         orderRepository.save(orderEntity);
         orderDetailRepository.saveAll(details);
     }
 }
 
-// ✅ 正确：在delRedis中清除缓存
-@Override
-public void delRedis() {
+@AfterProcess(AfterProcess.Phase.DEL_REDIS)
+public void clearCache() {
     redisTemplate.delete("order:" + getUserId());
     redisTemplate.delete("cart:" + getUserId());
 }
 
-// ✅ 正确：在finish中执行收尾逻辑
-@Override
-public void finish() {
-    // 发送通知、记录日志等
+@AfterProcess(AfterProcess.Phase.FINISH)
+public void onComplete() {
     eventPublisher.publishEvent(new OrderCompleteEvent(orderId));
 }
 ```
+
+**方式二：在Helper中覆写方法（兼容旧模式）**
+
+```java
+// ✅ 也可以：在自定义Helper中覆写
+@Override
+public void saveDB() {
+    if (needUpdate) {
+        orderRepository.save(orderEntity);
+    }
+}
+
+@Override
+public void delRedis() {
+    redisTemplate.delete("order:" + getUserId());
+}
+
+@Override
+public void finish() {
+    eventPublisher.publishEvent(new OrderCompleteEvent(orderId));
+}
+```
+
+> 注意：如果Entity上有`@AfterProcess`注解，将优先执行注解方法，不再调用Helper的对应方法。两种方式不要在同一Phase上混用。
 
 ### 12.2 测试最佳实践
 
 #### 12.2.1 录制测试用例
 
 ```java
-// 1. 在测试环境开启录制
-assembly.setRecordMode("test_case_name", persistenceService);
-
-// 2. 执行真实业务流程
-service.handle(vo, assembly);
-
-// 3. 测试用例自动保存到持久化存储
+// 使用TestCaseEngine直接录制，传入Facade即可
+TestCaseEngine engine = new TestCaseEngine(orderFacade, persistenceService, jsonSerializer);
+TestCaseVO testCase = new TestCaseVO();
+testCase.setName("test_case_name");
+TestCaseVO recorded = engine.record(testCase);
+// 测试用例自动保存到持久化存储
 // 包含：输入数据、外部交互记录、输出结果
 ```
 
@@ -1702,13 +1850,18 @@ log.info("装配线创建，assemblyIdentity={}, mode={}",
 
 ### 13.1 架构相关
 
-**Q: 为什么要用五层泛型？**
+**Q: 为什么从五层泛型简化到三层？**
 
-A: 五层泛型的设计确保了编译期类型安全，避免了运行时类型转换错误。虽然初期理解成本高，但带来了以下好处：
-- 编译期类型检查，提前发现错误
-- IDE提供完整的代码提示
-- 重构时有编译器保护
-- 避免了大量的强制类型转换
+A: 原先的五层泛型（V, T, O, R, A）虽然提供了完整的编译期类型安全，但消费方需要创建约10个类才能实现一个业务流程。分析发现：
+- O (Helper) 和 A (Assembly) 的编译期约束实际价值有限（Assembly子类通常为空壳，Helper的类型安全通过协变返回类型保持）
+- 保留V、T、R三个泛型覆盖了最核心的类型安全场景：`doProcess(T, R)`参数类型、`process(R)`返回类型V
+- 简化后消费方所需类从10个降到4~5个
+
+**Q: DynamicAssembly和自定义Assembly的区别？**
+
+A:
+- **DynamicAssembly**: 框架自动创建，适用于单一业务处理的大多数场景。消费方无需编写Assembly代码。
+- **自定义Assembly**: 仅当需要多个业务单元的复杂编排（如多阶段Pipeline）时才需要。需要注册`AssemblyTypeIdentifier`。
 
 **Q: BusinessAssembly和BusinessFacade的区别是什么？**
 
@@ -1760,12 +1913,15 @@ A:
 
 **Q: 如何添加新的业务类型？**
 
-A: 参考"11.1 定义业务类型"，步骤如下：
-1. 实现`BusinessTypeIdentifier`（推荐使用枚举）
-2. 定义输入VO（继承`UserBusinessVO`）
-3. 定义输出DealVO（继承`UserBusinessDealVO`）
-4. 实现Entity、Helper、Env、Facade
-5. 在`TypeRegistry`中注册
+A: 最少4~5个类即可：
+1. 定义输入VO（继承`UserBusinessVO`）
+2. 定义输出DealVO（继承`UserBusinessDealVO`）
+3. 实现Env（继承`BusinessEnv`，标注`@RecordAndReplay`）
+4. 实现Entity（继承`BusinessEntity`，使用`getEnv()`和`@AfterProcess`）
+5. 实现Facade（继承`BusinessFacade<V,T,R>`，实现`getAssemblyTypeCode()`和`doProcess(T,R)`）
+6. 注册类型：声明`@Bean public BusinessTypeIdentifier xxx() { return new SimpleBusinessType(...); }`
+
+无需创建：Helper子类（简单场景）、Assembly子类、TypeConfig配置类、AssemblyType枚举。
 
 **Q: 如何替换默认的JSON序列化？**
 
@@ -1792,26 +1948,30 @@ BusinessAssembly.configure(myTypeRegistry, myJsonSerializer);
 ### 14.1 核心优势
 
 1. **架构清晰**: 三层架构（消费层、核心层、自动配置层），职责明确
-2. **抽象优雅**: 五层泛型约束，编译期类型安全
-3. **扩展性强**: SPI驱动，所有核心依赖可替换
-4. **可测试性好**: 内置录制/回放测试基础设施，支持六种运行模式
-5. **低侵入性**: Spring Boot Starter方式接入，`@ConditionalOnMissingBean`全面覆盖
-6. **环境无关**: 核心层不依赖Spring，可在任意Java环境使用
+2. **API简洁**: 3个泛型参数，消费方最少4~5个类即可实现完整业务流程
+3. **抽象优雅**: 泛型约束覆盖核心类型安全，注解驱动生命周期
+4. **扩展性强**: SPI驱动，所有核心依赖可替换
+5. **可测试性好**: 内置录制/回放测试基础设施，支持六种运行模式
+6. **低侵入性**: Spring Boot Starter方式接入，`@ConditionalOnMissingBean`全面覆盖
+7. **环境无关**: 核心层不依赖Spring，可在任意Java环境使用
+8. **自动推导**: Assembly自动创建、类型自动收集，减少胶水代码
 
 ### 14.2 学习路径
 
-1. **入门阶段**: 理解`BusinessFacade`的模板方法流程（process → doProcess → buildVO）
-2. **进阶阶段**: 掌握`BusinessAssembly`装配线编排和`BusinessEnv`环境抽象
+1. **入门阶段**: 理解`BusinessFacade`的模板方法流程（process(R) → doProcess(T, R) → buildVO）
+2. **进阶阶段**: 掌握`@AfterProcess`注解、`getEnv()`快捷方法、`SimpleBusinessType`类型注册
 3. **高级阶段**: 理解录制/回放机制和`TestCaseEngine`测试引擎
-4. **专家阶段**: 能够自定义SPI实现，扩展框架能力
+4. **专家阶段**: 自定义Helper、Assembly、SPI实现，扩展框架能力
 
 ### 14.3 注意事项
 
 1. 所有外部交互方法必须标注`@RecordAndReplay`，否则无法录制/回放
 2. `BusinessEnv`必须使用`@Scope(SCOPE_PROTOTYPE)`，保证实例隔离
 3. 消费方必须实现`TestCasePersistenceService`才能使用测试用例功能
-4. 类型必须在`TypeRegistry`中注册，否则装配线无法解析
+4. 业务类型需注册为`@Bean`（`BusinessTypeIdentifier`），框架自动收集
 5. 使用框架异常体系（`InterruptException`/`SkipException`/`DegradeException`），不要直接抛`RuntimeException`
+6. Entity上的`@AfterProcess`注解与Helper的生命周期方法在同一Phase上不要混用
+7. `doProcess(T, R)` 中VO直接传入，无需通过`helper.getContext().getVo()`获取
 
 ------
 

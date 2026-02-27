@@ -1,7 +1,6 @@
 package com.tianrenservice.ai_framework_spring.core.entity;
 
 import com.tianrenservice.ai_framework_spring.core.exception.InterruptException;
-import com.tianrenservice.ai_framework_spring.core.pipeline.BusinessAssembly;
 import com.tianrenservice.ai_framework_spring.core.pipeline.BusinessContext;
 import com.tianrenservice.ai_framework_spring.core.record.model.BusinessEnv;
 import com.tianrenservice.ai_framework_spring.core.spi.BeanProvider;
@@ -14,15 +13,12 @@ import java.util.Optional;
 
 /**
  * 业务辅助基类 - 管理 Context、Env，提供生命周期钩子
- *
- * 兼容性改动: SpringBeanUtil.getBean() → BeanProvider SPI
- * 业务方需通过 setBeanProvider() 注入 BeanProvider 实现
  */
 @Slf4j
 @Setter
-public class BusinessHelper<R extends UserBusinessVO, A extends BusinessAssembly> {
+public class BusinessHelper<R extends UserBusinessVO> {
 
-    protected BusinessContext<R, A> businessContext;
+    protected BusinessContext<R> businessContext;
     protected BusinessEnv businessEnv;
 
     private static BeanProvider beanProvider;
@@ -39,7 +35,7 @@ public class BusinessHelper<R extends UserBusinessVO, A extends BusinessAssembly
         return uid == null ? "" : uid;
     }
 
-    public static <T extends BusinessEntity<?>, O extends BusinessHelper<?, ?>> T build(O businessHelper, Class<T> clazz) {
+    public static <T extends BusinessEntity<?>, O extends BusinessHelper<?>> T build(O businessHelper, Class<T> clazz) {
         try {
             return clazz.getConstructor(businessHelper.getClass()).newInstance(businessHelper);
         } catch (InterruptException | NoSuchMethodException | InstantiationException
@@ -73,6 +69,10 @@ public class BusinessHelper<R extends UserBusinessVO, A extends BusinessAssembly
         }
         assert businessEnv != null : "businessEnv is null!";
         return (E) businessEnv;
+    }
+
+    public BusinessContext<R> getBusinessContext() {
+        return businessContext;
     }
 
     public void saveDB() {

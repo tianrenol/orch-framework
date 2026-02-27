@@ -22,13 +22,6 @@ import java.util.stream.Collectors;
 
 /**
  * 组合线基类 - Pipeline 编排器
- *
- * 兼容性改动:
- * - getAssemblyEnum() → getAssemblyTypeCode() 返回 String
- * - AssemblyEnum/BusinessEnum 遍历 → TypeRegistry SPI
- * - BusinessTestCaseServiceRpc → TestCasePersistenceService SPI
- * - BusinessTestCaseVO → TestCaseVO
- * - JsonUtil → JsonSerializer SPI
  */
 @Setter
 @Getter
@@ -40,8 +33,8 @@ public abstract class BusinessAssembly {
     @Delegate
     private final CacheInvoke cacheInvoke = new CacheInvoke(false);
 
-    public List<BusinessAssemblyUnit<?, ?, ?, ?>> businessAssemblyUnits = new ArrayList<>();
-    private BusinessAssemblyUnit<?, ?, ?, ?> currentUnit = null;
+    public List<BusinessAssemblyUnit<?, ?, ?>> businessAssemblyUnits = new ArrayList<>();
+    private BusinessAssemblyUnit<?, ?, ?> currentUnit = null;
 
     private BusinessMode mode = BusinessMode.LIVE;
     private String testCaseName;
@@ -54,8 +47,6 @@ public abstract class BusinessAssembly {
     private static TypeRegistry typeRegistry;
     private static JsonSerializer jsonSerializer;
     private TestCasePersistenceService testCasePersistenceService;
-
-    // PLACEHOLDER_STATIC_CONFIG
 
     public static void configure(TypeRegistry registry, JsonSerializer serializer) {
         typeRegistry = registry;
@@ -70,10 +61,6 @@ public abstract class BusinessAssembly {
         return jsonSerializer;
     }
 
-    /**
-     * 兼容性改动: 原 getAssemblyEnum() 返回 AssemblyEnum
-     * 现返回 String 编码，子类实现
-     */
     public abstract String getAssemblyTypeCode();
 
     private int unitCount = 0;
@@ -82,12 +69,23 @@ public abstract class BusinessAssembly {
         String assemblyTypeCode = getAssemblyTypeCode();
         BusinessTypeIdentifier businessType = businessVO.getBusinessType();
         unitCount = unitCount + 1;
-        currentUnit = (BusinessAssemblyUnit<?, ?, ?, ?>) invokeBuild(assemblyTypeCode, businessType, tClass, vClass, businessVO);
+
+        // 尝试特化 doBuild（消费方 Assembly 子类重写的方法）
+        Object unit = invokeBuild(assemblyTypeCode, businessType, tClass, vClass, businessVO);
+        if (unit == null) {
+            // 回退到通用 doBuild（DynamicAssembly 等无特化 doBuild 的场景）
+            unit = doBuild(null, null, businessVO);
+        }
+
+        currentUnit = (BusinessAssemblyUnit<?, ?, ?>) unit;
         businessAssemblyUnits.add(currentUnit);
     }
 
     public Object invokeBuild(String assemblyTypeCode, BusinessTypeIdentifier businessType, Class<?> tClass, Class<?> vClass, UserBusinessVO businessVO) {
         AssemblyTypeIdentifier assemblyType = typeRegistry.resolveAssemblyType(assemblyTypeCode);
+        if (assemblyType == null) {
+            return null;
+        }
         return cacheInvoke(assemblyType.getAssemblyClass().cast(this), "doBuild",
                 Arrays.asList(vClass, tClass, businessType.getVoClass()),
                 null, null, businessType.getVoClass().cast(businessVO));
@@ -104,6 +102,18 @@ public abstract class BusinessAssembly {
                  | IllegalAccessException | InvocationTargetException e) {
             throw new InterruptException("构建组装线失败", e);
         }
+    }
+
+    /**
+     * 根据类型编码创建 Assembly 实例
+     * 优先从 TypeRegistry 查找已注册的 Assembly 类，未找到则创建 DynamicAssembly
+     */
+    public static BusinessAssembly createForType(String typeCode) {
+        AssemblyTypeIdentifier assemblyType = typeRegistry.resolveAssemblyType(typeCode);
+        if (assemblyType != null) {
+            return createAssembly(assemblyType.getAssemblyClass());
+        }
+        return new DynamicAssembly(typeCode);
     }
 
     public void ready(BusinessEntity<?> advertEntity, UserBusinessVO businessVO) {
@@ -132,7 +142,7 @@ public abstract class BusinessAssembly {
     }
 
     public void finish(UserBusinessDealVO<?> advertVO, BusinessEntity<?> advertEntity, UserBusinessVO businessVO) {
-        for (BusinessAssemblyUnit<?, ?, ?, ?> unit : businessAssemblyUnits) {
+        for (BusinessAssemblyUnit<?, ?, ?> unit : businessAssemblyUnits) {
             unit.getBusinessEntity().finish();
             if (mode != BusinessMode.LIVE) {
                 unit.getBusinessDealVO().executeAllFutureTask();
@@ -142,7 +152,6 @@ public abstract class BusinessAssembly {
             saveTestCase(businessVO);
         }
     }
-    // PLACEHOLDER_TEST_MODES
 
     public void setCheckMode(TestCaseVO testCaseVO) {
         this.mode = BusinessMode.CHECK;
@@ -206,7 +215,6 @@ public abstract class BusinessAssembly {
         multiBusinessEnv.put(currentUnit.getMarkName(), advertEntity.getBusinessHelper().getBusinessEnv().getRecords());
         multiBusinessDealVO.put(currentUnit.getMarkName(), advertVO);
     }
-    // PLACEHOLDER_GENERATE
 
     public TestCaseVO generateTestCase(BusinessVO businessVO) {
         if (testCaseName == null) {
@@ -274,7 +282,6 @@ public abstract class BusinessAssembly {
             throw new InterruptException("更新测试用例失败", e);
         }
     }
-    // PLACEHOLDER_LOAD_RUN
 
     @SuppressWarnings("unchecked")
     private boolean loadTestCase(TestCaseVO testCaseVO) {
@@ -322,36 +329,14 @@ public abstract class BusinessAssembly {
         }
         return false;
     }
-    // PLACEHOLDER_RUN_TESTCASE
 
     /**
-     * 执行测试用例
-     * 兼容性改动: 原实现遍历 AssemblyEnum.values() 和 BusinessEnum.values()
-     * 现通过 TypeRegistry SPI 动态查找
+     * 通过 Facade 执行测试用例 — 替代原 doRunTestCase 中的反射调用
      */
-    public static BusinessAssembly runTestCase(BusinessMode mode, Object service, String methodName,
-                                                TestCaseVO testCaseVO, TestCasePersistenceService persistenceService) {
-        AssemblyTypeIdentifier assemblyType = typeRegistry.resolveAssemblyType(testCaseVO.getBusinessType());
-        if (assemblyType != null) {
-            BusinessAssembly assembly = createAssembly(assemblyType.getAssemblyClass());
-            assembly.doRunTestCase(mode, service, methodName, testCaseVO, persistenceService);
-            return assembly;
-        }
-        BusinessTypeIdentifier businessType = typeRegistry.resolveBusinessType(testCaseVO.getBusinessType());
-        if (businessType != null) {
-            // 回退到默认 support 类型的组合线
-            AssemblyTypeIdentifier supportType = typeRegistry.resolveAssemblyType("support");
-            if (supportType != null) {
-                BusinessAssembly assembly = createAssembly(supportType.getAssemblyClass());
-                assembly.doRunTestCase(mode, service, methodName, testCaseVO, persistenceService);
-                return assembly;
-            }
-        }
-        return null;
-    }
-
-    public void doRunTestCase(BusinessMode mode, Object service, String methodName,
-                              TestCaseVO testCaseVO, TestCasePersistenceService persistenceService) {
+    @SuppressWarnings("unchecked")
+    public <R extends UserBusinessVO> void doRunTestCaseViaFacade(
+            BusinessMode mode, BusinessFacade<?, ?, R> facade,
+            TestCaseVO testCaseVO, TestCasePersistenceService persistenceService) {
         if (mode == null) {
             throw new InterruptException("执行测试用例时，业务模式不能为空");
         }
@@ -364,19 +349,8 @@ public abstract class BusinessAssembly {
             case RECORD: setRecordMode(testCaseVO.getName(), persistenceService); break;
             default: throw new InterruptException("执行测试用例不支持此模式: " + mode);
         }
-        List<Map.Entry<String, BusinessVO>> entryList = new ArrayList<>(multiBusinessVO.entrySet());
-        entryList = entryList.stream().sorted(Comparator.comparingInt(entry -> {
-            String key = entry.getKey();
-            int index = key.lastIndexOf('-');
-            if (index != -1 && index < key.length() - 1) {
-                try {
-                    return Integer.parseInt(key.substring(index + 1));
-                } catch (NumberFormatException e) {
-                    return Integer.MAX_VALUE;
-                }
-            }
-            return Integer.MAX_VALUE;
-        })).collect(Collectors.toList());
+
+        List<Map.Entry<String, BusinessVO>> entryList = getSortedBusinessEntries();
         for (int i = 0; i < entryList.size(); i++) {
             int index = Objects.isNull(currentUnit) ? -1
                     : entryList.stream().map(Map.Entry::getKey).collect(Collectors.toList()).indexOf(currentUnit.getMarkName());
@@ -390,10 +364,27 @@ public abstract class BusinessAssembly {
                 log.warn("测试用例中缺少业务数据: scope={}", entry.getKey());
                 continue;
             }
-            BusinessTypeIdentifier bt = businessVO.getBusinessType();
-            AssemblyTypeIdentifier at = typeRegistry.resolveAssemblyType(getAssemblyTypeCode());
-            cacheInvoke(service, methodName, Arrays.asList(bt.getVoClass(), at.getAssemblyClass()),
-                    bt.getVoClass().cast(businessVO), at.getAssemblyClass().cast(this));
+            R vo = (R) businessVO;
+            facade.process(vo, this);
         }
+    }
+
+    /**
+     * 获取排序后的业务数据条目列表
+     */
+    private List<Map.Entry<String, BusinessVO>> getSortedBusinessEntries() {
+        List<Map.Entry<String, BusinessVO>> entryList = new ArrayList<>(multiBusinessVO.entrySet());
+        return entryList.stream().sorted(Comparator.comparingInt(entry -> {
+            String key = entry.getKey();
+            int index = key.lastIndexOf('-');
+            if (index != -1 && index < key.length() - 1) {
+                try {
+                    return Integer.parseInt(key.substring(index + 1));
+                } catch (NumberFormatException e) {
+                    return Integer.MAX_VALUE;
+                }
+            }
+            return Integer.MAX_VALUE;
+        })).collect(Collectors.toList());
     }
 }

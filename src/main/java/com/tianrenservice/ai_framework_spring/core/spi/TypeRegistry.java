@@ -32,4 +32,12 @@ public interface TypeRegistry {
      * 根据业务类型编码查找 VO 类
      */
     Class<? extends UserBusinessVO> resolveVoClass(String typeCode);
+
+    /**
+     * 便捷注册：一步注册业务类型
+     */
+    default void registerBusiness(String code, String description,
+                                   Class<? extends UserBusinessVO> voClass) {
+        registerBusinessType(new SimpleBusinessType(code, description, voClass));
+    }
 }

@@ -6,15 +6,16 @@ import com.tianrenservice.ai_framework_spring.autoconfigure.spi.SpringBeanProvid
 import com.tianrenservice.ai_framework_spring.core.entity.BusinessHelper;
 import com.tianrenservice.ai_framework_spring.core.pipeline.BusinessAssembly;
 import com.tianrenservice.ai_framework_spring.core.record.aspect.RecordAndReplayAspect;
-import com.tianrenservice.ai_framework_spring.core.spi.BeanProvider;
-import com.tianrenservice.ai_framework_spring.core.spi.JsonSerializer;
-import com.tianrenservice.ai_framework_spring.core.spi.TypeRegistry;
+import com.tianrenservice.ai_framework_spring.core.spi.*;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+
+import java.util.List;
 
 /**
  * AI Framework Spring Boot 自动配置
@@ -48,8 +49,16 @@ public class AiFrameworkAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public TypeRegistry typeRegistry(JsonSerializer jsonSerializer) {
+    public TypeRegistry typeRegistry(JsonSerializer jsonSerializer,
+                                     ObjectProvider<List<BusinessTypeIdentifier>> businessTypes,
+                                     ObjectProvider<List<AssemblyTypeIdentifier>> assemblyTypes) {
         DefaultTypeRegistry registry = new DefaultTypeRegistry();
+        // 自动收集所有 BusinessTypeIdentifier Bean 并注册
+        businessTypes.ifAvailable(types ->
+                types.forEach(registry::registerBusinessType));
+        // 自动收集所有 AssemblyTypeIdentifier Bean 并注册
+        assemblyTypes.ifAvailable(types ->
+                types.forEach(registry::registerAssemblyType));
         // 框架初始化：注入 TypeRegistry 和 JsonSerializer 到 BusinessAssembly
         BusinessAssembly.configure(registry, jsonSerializer);
         return registry;

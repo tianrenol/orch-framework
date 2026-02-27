@@ -1,8 +1,5 @@
 package com.tianrenservice.ai_framework_spring.core.pipeline;
 
-import com.tianrenservice.ai_framework_spring.core.entity.BusinessEntity;
-import com.tianrenservice.ai_framework_spring.core.entity.BusinessHelper;
-import com.tianrenservice.ai_framework_spring.core.vo.UserBusinessDealVO;
 import com.tianrenservice.ai_framework_spring.core.vo.UserBusinessVO;
 import lombok.Builder;
 import lombok.Getter;
@@ -16,14 +13,14 @@ import java.util.Objects;
 @Getter
 @Slf4j
 @Builder
-public class BusinessContext<T extends UserBusinessVO, A extends BusinessAssembly> {
+public class BusinessContext<T extends UserBusinessVO> {
 
     private final T businessVo;
-    private final A assembly;
+    private final BusinessAssembly assembly;
 
     @SuppressWarnings("unchecked")
-    public static <T extends UserBusinessVO, A extends BusinessAssembly> BusinessContext<T, A> build(T businessVo, A assembly) {
-        return (BusinessContext<T, A>) BusinessContext.builder()
+    public static <T extends UserBusinessVO> BusinessContext<T> build(T businessVo, BusinessAssembly assembly) {
+        return (BusinessContext<T>) BusinessContext.builder()
                 .businessVo(businessVo)
                 .assembly(Objects.nonNull(assembly) ? assembly : BusinessAssembly.createAssembly(BusinessEmptyAssembly.class))
                 .build();

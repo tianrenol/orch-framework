@@ -1,20 +1,21 @@
 package com.tianrenservice.ai_framework_spring.core.entity;
 
+import com.tianrenservice.ai_framework_spring.core.annotation.AfterProcess;
 import com.tianrenservice.ai_framework_spring.core.exception.InterruptException;
+import com.tianrenservice.ai_framework_spring.core.record.model.BusinessEnv;
 import com.tianrenservice.ai_framework_spring.core.spi.ScopeIdentifier;
 import com.tianrenservice.ai_framework_spring.core.vo.BusinessDealVO;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.lang.reflect.Method;
+
 /**
  * 业务实体基类 - 承载业务逻辑的核心容器
- *
- * 兼容性改动: getScopeEnum() → getScopeIdentifier()
- * 原返回 ScopeEnum 枚举，现返回 ScopeIdentifier 接口
  */
 @Slf4j
 @Getter
-public class BusinessEntity<O extends BusinessHelper<?, ?>> extends UserBusiness {
+public class BusinessEntity<O extends BusinessHelper<?>> extends UserBusiness {
 
     protected final O businessHelper;
 
@@ -28,12 +29,17 @@ public class BusinessEntity<O extends BusinessHelper<?, ?>> extends UserBusiness
     }
 
     /**
-     * 返回作用域标识
-     * 兼容性改动: 原方法名 getScopeEnum()，返回类型从 ScopeEnum 改为 ScopeIdentifier
-     * 默认返回 null，子类按需覆写
+     * 返回作用域标识，子类按需覆写
      */
     public ScopeIdentifier getScopeIdentifier() {
         return null;
+    }
+
+    /**
+     * Env 快捷访问 — 避免 getBusinessHelper().getBusinessEnv(clazz) 长链路
+     */
+    public <E extends BusinessEnv> E getEnv(Class<E> envClass) {
+        return businessHelper.getBusinessEnv(envClass);
     }
 
     public <V extends BusinessDealVO<T>, T extends BusinessEntity<?>> V buildVO(Class<V> clazz) {
@@ -44,12 +50,48 @@ public class BusinessEntity<O extends BusinessHelper<?, ?>> extends UserBusiness
         }
     }
 
+    /**
+     * Pipeline 后处理 — 优先执行 @AfterProcess 注解方法，回退到 Helper 的同名方法
+     */
     public void afterProcess() {
-        getBusinessHelper().saveDB();
-        getBusinessHelper().delRedis();
+        boolean hasSaveDB = invokeAnnotatedMethods(AfterProcess.Phase.SAVE_DB);
+        boolean hasDelRedis = invokeAnnotatedMethods(AfterProcess.Phase.DEL_REDIS);
+
+        if (!hasSaveDB) {
+            getBusinessHelper().saveDB();
+        }
+        if (!hasDelRedis) {
+            getBusinessHelper().delRedis();
+        }
     }
 
+    /**
+     * Pipeline 完成回调 — 优先执行 @AfterProcess(FINISH)，回退到 Helper.finish()
+     */
     public void finish() {
-        businessHelper.finish();
+        boolean hasFinish = invokeAnnotatedMethods(AfterProcess.Phase.FINISH);
+        if (!hasFinish) {
+            businessHelper.finish();
+        }
+    }
+
+    /**
+     * 扫描并执行当前实体上标注了 @AfterProcess 的方法
+     */
+    private boolean invokeAnnotatedMethods(AfterProcess.Phase phase) {
+        boolean found = false;
+        for (Method m : this.getClass().getDeclaredMethods()) {
+            AfterProcess ann = m.getAnnotation(AfterProcess.class);
+            if (ann != null && ann.value() == phase) {
+                try {
+                    m.setAccessible(true);
+                    m.invoke(this);
+                    found = true;
+                } catch (Exception e) {
+                    throw new InterruptException("执行 @AfterProcess(" + phase + ") 失败: " + m.getName(), e);
+                }
+            }
+        }
+        return found;
     }
 }

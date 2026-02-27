@@ -12,14 +12,14 @@ import java.util.Objects;
  * 组合线单元 - Pipeline 中的单个执行节点
  */
 @Getter
-public class BusinessAssemblyUnit<V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO, A extends BusinessAssembly> {
+public class BusinessAssemblyUnit<V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO> {
 
-    private final BusinessContext<R, A> businessContext;
+    private final BusinessContext<R> businessContext;
     private T businessEntity;
     private V businessDealVO;
     private final int order;
 
-    public BusinessAssemblyUnit(BusinessContext<R, A> businessContext, T businessEntity, V businessDealVO, int order) {
+    public BusinessAssemblyUnit(BusinessContext<R> businessContext, T businessEntity, V businessDealVO, int order) {
         this.order = order;
         if (Objects.isNull(businessContext)) {
             throw new InterruptException("BusinessContext cannot be null");
@@ -53,23 +53,19 @@ public class BusinessAssemblyUnit<V extends UserBusinessDealVO<?>, T extends Bus
         return Objects.nonNull(businessDealVO);
     }
 
-    /**
-     * 兼容性改动: 原实现使用 assemblyEnum.name() + businessEnum.name()
-     * 现改为通过接口 getCode() 获取标识
-     */
     public String getMarkName() {
         return businessContext.getAssembly().getAssemblyTypeCode()
                 + "-" + businessContext.getBusinessVo().getBusinessType().getCode()
                 + "-" + order;
     }
 
-    public static <V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO, A extends BusinessAssembly>
-    BusinessAssemblyUnit<V, T, R, A> doBuild(Class<V> vClass, Class<T> tClass, R r, A a) {
+    public static <V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO>
+    BusinessAssemblyUnit<V, T, R> doBuild(Class<V> vClass, Class<T> tClass, R r, BusinessAssembly a) {
         return new BusinessAssemblyUnit<>(BusinessContext.build(r, a), null, null, a.getUnitCount());
     }
 
-    public static <V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO, A extends BusinessAssembly>
-    BusinessAssemblyUnit<V, T, R, A> doBuild(V v, T t, R r, A a) {
+    public static <V extends UserBusinessDealVO<?>, T extends BusinessEntity<?>, R extends UserBusinessVO>
+    BusinessAssemblyUnit<V, T, R> doBuild(V v, T t, R r, BusinessAssembly a) {
         return new BusinessAssemblyUnit<>(BusinessContext.build(r, a), t, v, a.getUnitCount());
     }
 }

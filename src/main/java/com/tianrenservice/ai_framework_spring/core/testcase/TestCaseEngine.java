@@ -3,6 +3,7 @@ package com.tianrenservice.ai_framework_spring.core.testcase;
 import com.tianrenservice.ai_framework_spring.core.constant.BusinessMode;
 import com.tianrenservice.ai_framework_spring.core.exception.InterruptException;
 import com.tianrenservice.ai_framework_spring.core.pipeline.BusinessAssembly;
+import com.tianrenservice.ai_framework_spring.core.pipeline.BusinessFacade;
 import com.tianrenservice.ai_framework_spring.core.spi.JsonSerializer;
 import com.tianrenservice.ai_framework_spring.core.spi.TestCasePersistenceService;
 import com.tianrenservice.ai_framework_spring.core.testcase.model.TestCaseVO;
@@ -13,14 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 测试用例引擎 - 从 AdvertTestCaseService 抽象而来
- *
- * 兼容性改动:
- * - 移除 AdvertService 硬依赖 → 通过 TestCaseRunner 注入通用 service
- * - 移除 BusinessTestCaseServiceRpc (Dubbo) → TestCasePersistenceService SPI
- * - 移除 JsonUtil → JsonSerializer SPI
- * - 移除 Ret<T> 包装 → 直接返回结果
- * - 移除 javafx.util.Pair / ImmutableMap → 标准 JDK 实现
+ * 测试用例引擎 - 提供录制、回放、检查、复盘、重生成等测试能力
  */
 @Slf4j
 public class TestCaseEngine {
@@ -30,12 +24,12 @@ public class TestCaseEngine {
     private final TestCasePersistenceService persistenceService;
     private final JsonSerializer jsonSerializer;
 
-    public TestCaseEngine(Object service, String methodName,
+    public TestCaseEngine(BusinessFacade<?, ?, ?> facade,
                           TestCasePersistenceService persistenceService,
                           JsonSerializer jsonSerializer) {
         this.persistenceService = persistenceService;
         this.jsonSerializer = jsonSerializer;
-        this.runner = new TestCaseRunner(service, methodName, persistenceService);
+        this.runner = new TestCaseRunner(facade, persistenceService);
         this.comparator = new TestCaseComparator(jsonSerializer);
     }
 
@@ -84,7 +78,6 @@ public class TestCaseEngine {
         throw new InterruptException("Test case review failed, inconsistencies: "
                 + jsonSerializer.toJson(inconsistentMap));
     }
-    // PLACEHOLDER_REPLAY
 
     /**
      * 重播测试用例 - 使用录制数据回放，未匹配的调用直接执行
