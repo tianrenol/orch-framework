@@ -6,6 +6,7 @@ import com.tianrenservice.orch_framework.autoconfigure.spi.JacksonJsonSerializer
 import com.tianrenservice.orch_framework.autoconfigure.spi.SpringBeanProvider;
 import com.tianrenservice.orch_framework.core.entity.BusinessHelper;
 import com.tianrenservice.orch_framework.core.pipeline.BusinessAssembly;
+import com.tianrenservice.orch_framework.core.pipeline.BusinessFacade;
 import com.tianrenservice.orch_framework.core.record.handler.RecordAndReplayHandler;
 import com.tianrenservice.orch_framework.core.record.model.BusinessEnv;
 import com.tianrenservice.orch_framework.core.spi.*;
@@ -28,6 +29,7 @@ import java.util.List;
  * - JsonSerializer → JacksonJsonSerializer
  * - BeanProvider → SpringBeanProvider
  * - TypeRegistry → DefaultTypeRegistry
+ * - ExceptionHandler → DefaultExceptionHandler
  * - RecordAndReplayHandler → 录制/回放核心处理器
  * - RecordAndReplayAspect → AOP 切面（薄壳）
  * - BusinessEnv → Prototype Bean
@@ -46,6 +48,12 @@ public class OrchFrameworkAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public ExceptionHandler exceptionHandler() {
+        return new DefaultExceptionHandler();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public BeanProvider beanProvider(ApplicationContext applicationContext) {
         SpringBeanProvider provider = new SpringBeanProvider(applicationContext);
         BusinessHelper.configureBeanProvider(provider);
@@ -55,6 +63,7 @@ public class OrchFrameworkAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public TypeRegistry typeRegistry(JsonSerializer jsonSerializer,
+                                     ExceptionHandler exceptionHandler,
                                      ObjectProvider<List<BusinessTypeIdentifier>> businessTypes,
                                      ObjectProvider<List<AssemblyTypeIdentifier>> assemblyTypes) {
         DefaultTypeRegistry registry = new DefaultTypeRegistry();
@@ -63,6 +72,7 @@ public class OrchFrameworkAutoConfiguration {
         assemblyTypes.ifAvailable(types ->
                 types.forEach(registry::registerAssemblyType));
         BusinessAssembly.configure(registry, jsonSerializer);
+        BusinessFacade.configureExceptionHandler(exceptionHandler);
         return registry;
     }
 

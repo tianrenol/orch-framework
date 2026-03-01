@@ -5,6 +5,8 @@ import com.tianrenservice.orch_framework.core.entity.BusinessHelper;
 import com.tianrenservice.orch_framework.core.exception.DegradeException;
 import com.tianrenservice.orch_framework.core.exception.InterruptException;
 import com.tianrenservice.orch_framework.core.exception.SkipException;
+import com.tianrenservice.orch_framework.core.spi.DefaultExceptionHandler;
+import com.tianrenservice.orch_framework.core.spi.ExceptionHandler;
 import com.tianrenservice.orch_framework.core.vo.UserBusinessDealVO;
 import com.tianrenservice.orch_framework.core.vo.UserBusinessVO;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,15 @@ import java.util.Arrays;
 @Slf4j
 public abstract class BusinessFacade<V extends UserBusinessDealVO<T>, T extends BusinessEntity<?>,
         R extends UserBusinessVO> {
+
+    private static ExceptionHandler exceptionHandler = new DefaultExceptionHandler();
+
+    /**
+     * 框架初始化时注入 ExceptionHandler
+     */
+    public static void configureExceptionHandler(ExceptionHandler handler) {
+        exceptionHandler = handler;
+    }
 
     /**
      * 返回装配线类型编码，框架据此创建 Assembly 实例
@@ -82,13 +93,17 @@ public abstract class BusinessFacade<V extends UserBusinessDealVO<T>, T extends 
             log.debug("businessFacade process end, userId:{}, {}", r.getUserId(), vClazz.getName());
             return v;
         } catch (SkipException e) {
-            log.error("businessFacade process skip, userId:{}, message:{}", r.getUserId(), e.getMessage());
-            return null;
+            return exceptionHandler.onSkip(e, r);
         } catch (DegradeException e) {
-            log.error("businessFacade process degrade, userId:{}, message:{}", r.getUserId(), e.getMessage());
-            return null;
+            return exceptionHandler.onDegrade(e, r);
         } catch (Exception e) {
-            throw new InterruptException("businessFacade process interrupt", e);
+            return exceptionHandler.onException(e, r);
+        } finally {
+            try {
+                exceptionHandler.onFinally(r);
+            } catch (Exception ex) {
+                log.warn("ExceptionHandler.onFinally 执行异常", ex);
+            }
         }
     }
 

@@ -33,7 +33,7 @@ This is a reusable business process orchestration framework with recording/repla
 ### orch-framework-core (Pure Java)
 
 **`core.pipeline`** — The pipeline orchestration engine:
-- `BusinessFacade<V, T, R>` — Template-method entry point with 3 generics (V=DealVO, T=Entity, R=InputVO). Subclass and implement `doProcess(T, R)` to define business logic. Call `process(R)` to drive the full lifecycle: build → ready → process → complete.
+- `BusinessFacade<V, T, R>` — Template-method entry point with 3 generics (V=DealVO, T=Entity, R=InputVO). Subclass and implement `doProcess(T, R)` to define business logic. Call `process(R)` to drive the full lifecycle: build → ready → process → complete. Exception handling is delegated to `ExceptionHandler` SPI.
 - `BusinessAssembly` — Pipeline orchestrator that manages `BusinessAssemblyUnit` nodes. Handles test case modes (RECORD, REPLAY, CHECK, REVIEW, REGENERATE). Configured statically with `TypeRegistry` and `JsonSerializer`.
 - `DynamicAssembly` — Default Assembly implementation auto-created by `BusinessAssembly.createForType()`. Consumers no longer need to write empty Assembly subclasses.
 - `BusinessAssemblyUnit<V, T, R>` — Single execution node in a pipeline, holding context + entity + deal VO.
@@ -59,6 +59,7 @@ This is a reusable business process orchestration framework with recording/repla
 - `BeanProvider` — Bean lookup abstraction (decouples from Spring ApplicationContext).
 - `BusinessTypeIdentifier` / `AssemblyTypeIdentifier` / `ScopeIdentifier` — Type identity contracts.
 - `TestCasePersistenceService` — Persistence for test cases.
+- `ExceptionHandler` — Pipeline exception handling strategy. `DefaultExceptionHandler` provides the default behavior (log + skip/degrade/interrupt). Consumers override by declaring their own `@Bean`.
 
 **`core.constant`** — `BusinessMode` enum: LIVE, RECORD, REPLAY, CHECK, REVIEW, REGENERATE.
 
@@ -84,6 +85,7 @@ This is a reusable business process orchestration framework with recording/repla
 - **Handler/Adapter pattern for AOP**: `RecordAndReplayHandler` (core, pure Java) holds all logic; `RecordAndReplayAspect` (starter) is a thin AspectJ adapter. Non-Spring users can call the handler directly.
 - **Reflective invocation via `CacheInvoke`**: Used throughout for dynamic method dispatch with caching.
 - **Six business modes** control framework behavior — LIVE for production, RECORD to capture interactions, REPLAY/CHECK/REVIEW/REGENERATE for test case execution.
+- **Exception handling SPI**: `BusinessFacade.process()` delegates all exception handling to `ExceptionHandler` (onSkip, onDegrade, onException, onFinally). Consumers override by declaring a custom `@Bean ExceptionHandler` or calling `BusinessFacade.configureExceptionHandler()` in non-Spring environments.
 
 ### Consumer Minimum Code (4-5 classes)
 
