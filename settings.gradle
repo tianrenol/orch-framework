@@ -1,0 +1,3 @@
+rootProject.name = 'orch-framework'
+include 'orch-framework-core'
+include 'orch-framework-spring-boot-starter'
